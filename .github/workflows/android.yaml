@@ -1,23 +1,31 @@
-name: Build AppFlowy Android APK
+name: Build AppFlowy Android
 
 on:
   workflow_dispatch:
     inputs:
+        branch:
+          description: "Branch"
+          required: true
+          default: "main"
+        repo:
+          description: "Repo"
+          required: true
+          default: "AppFlowy-IO/AppFlowy"
         build_name:
-            description: 'Build Name'
+            description: "Build Version (it should match the version in pubspec.yaml)"
             required: true
-            default: '0'
+            default: '0.0.0'
         build_number:
-            description: 'Build Number'
+            description: 'Build Number (it should be unique)'
             required: true
-            default: '0'
+            default: '2900000'
         build_type:
             type: choice
             description: 'Build Type'
             required: true
             options:
                 - 'apk'
-                - 'aab'
+                - 'appbundle'
 
 env:
   FLUTTER_VERSION: "3.18.0-0.2.pre"
@@ -47,8 +55,8 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v2
         with:
-          repository: AppFlowy-IO/AppFlowy
-          ref: main
+          repository: ${{ github.event.inputs.repo }}
+          ref: ${{ github.event.inputs.branch }}
 
       - name: Install Rust toolchain
         id: rust_toolchain
@@ -120,8 +128,8 @@ jobs:
       - name: Configure key.properties
         working-directory: frontend/appflowy_flutter/android
         run: |
-          echo "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" | base64 --decode > app/upload-keystore.jks
-          echo -e "storePassword=appflowy\nkeyPassword=appflowy\nkeyAlias=upload\nstoreFile=upload-keystore.jks" > key.properties
+          echo "${{ secrets.ANDROID_UPLOAD_KEYSTORE }}" | base64 --decode > app/upload-keystore.jks
+          echo -e "storePassword=${{ secrets.P12_PASSWORD }}\nkeyPassword=${{ secrets.P12_PASSWORD }}\nkeyAlias=upload\nstoreFile=upload-keystore.jks" > key.properties
         shell: bash
 
       - name: Build AppFlowy
@@ -130,18 +138,23 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
             cargo make --profile production-android appflowy-core-dev-android
-            cargo make --profile production-android code_generation
+            sh scripts/code_generation/generate.sh
             cd appflowy_flutter
-            flutter build ${{ github.event.inputs.build_type }} --build-name ${{ github.event.inputs.build_number }} --build-number ${{ github.event.inputs.build_name }} --split-debug-info=./ --obfuscate
+            flutter pub get
+            if [ ${{github.event.inputs.build_type}} = "apk" ]; then
+              flutter build apk --build-name ${{ github.event.inputs.build_name }} --build-number ${{ github.event.inputs.build_number }} --split-per-abi --split-debug-info=./ --obfuscate
+            elif [ ${{github.event.inputs.build_type}} = "appbundle" ]; then
+              flutter build appbundle --build-name ${{ github.event.inputs.build_name }} --build-number ${{ github.event.inputs.build_number }} --split-debug-info=./ --obfuscate
+            fi
 
       - name: Rename APK
-        if: github.event.inputs.build_type  == 'apk'
+        if: github.event.inputs.build_type == 'apk'
         run: |
           mv frontend/appflowy_flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk frontend/appflowy_flutter/build/app/outputs/flutter-apk/AppFlowy.apk
         shell: bash
 
       - name: Upload APK
-        if: github.event.inputs.build_type  == 'apk'
+        if: github.event.inputs.build_type == 'apk'
         uses: actions/upload-artifact@v2
         with:
           name: AppFlowy-${{ github.event.inputs.build_name }}.apk
@@ -153,7 +166,7 @@ jobs:
           mv frontend/appflowy_flutter/build/app/outputs/bundle/release/app-release.aab frontend/appflowy_flutter/build/app/outputs/bundle/release/AppFlowy.aab
         shell: bash
 
-      - name: Upload APK
+      - name: Upload AAB
         if: github.event.inputs.build_type  == 'appbundle'
         uses: actions/upload-artifact@v2
         with:
