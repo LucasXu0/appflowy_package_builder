@@ -196,7 +196,22 @@ jobs:
           "${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg" \
           "${{ env.MACOS_APP_RELEASE_PATH }}/AppFlowy.app"
 
+      - name: Check for Secret availability
+        id: secret-check
+        shell: bash
+        run: |
+          if [ "${{ secrets.MACOS_NOTARY_USER }}" == '' ]; then
+            echo "available=false" >> $GITHUB_OUTPUT;
+          elif [ "${{ secrets.MACOS_TEAM_ID }}" == '' ]; then
+            echo "available=false" >> $GITHUB_OUTPUT;
+          elif [ "${{ secrets.MACOS_NOTARY_PWD }}" == '' ]; then
+            echo "available=false" >> $GITHUB_OUTPUT;
+          else
+            echo "available=true" >> $GITHUB_OUTPUT;
+          fi
+
       - name: Notarize AppFlowy
+        if: ${{ steps.secret-check.outputs.available == 'true' }}
         run: |
           xcrun notarytool submit ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg --apple-id ${{ secrets.MACOS_NOTARY_USER }} --team-id ${{ secrets.MACOS_TEAM_ID }} --password ${{ secrets.MACOS_NOTARY_PWD }} -v -f "json" --wait
 
