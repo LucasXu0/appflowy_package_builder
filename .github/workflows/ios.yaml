@@ -14,11 +14,22 @@ on:
       build_name:
         description: "Build Version (it should match the version in pubspec.yaml)"
         required: true
-        default: "0.0.0"
+        default: "0.4.3"
       build_number:
         description: "Build Number (it should be unique)"
         required: true
-        default: "2900000"
+        default: "1"
+      server_type:
+        type: choice
+        description: 'Server Type (1 for local, 2 for cloud)'
+        required: true
+        options:
+            - 1
+            - 2
+      server_url:
+        description: 'Server URL'
+        required: true
+        default: 'https://beta.appflowy.cloud'
 
 env:
   FLUTTER_VERSION: "3.18.0-0.2.pre"
@@ -110,8 +121,8 @@ jobs:
       - name: Generate env file
         working-directory: frontend/appflowy_flutter
         run: |
-          echo "${{ secrets.CLOUD_URL }}" > .env
-          echo "${{ secrets.CLOUD_TYPE }}" >> .env
+          echo "${{ github.env.inputs.server_url }}" > .env
+          echo "${{ github.env.inputs.server_type }}" >> .env
         shell: bash
 
       - name: Build AppFlowy
