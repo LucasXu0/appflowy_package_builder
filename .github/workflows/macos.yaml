@@ -42,7 +42,7 @@ env:
   RUST_TOOLCHAIN: "1.75"
 
 jobs:
-  build-for-macOS-x86_64:
+  x86_64:
     runs-on: macos-11
 
     if: ${{ github.event.inputs.arch == 'All' || github.event.inputs.arch == 'x86_64' }}
@@ -137,7 +137,7 @@ jobs:
           name: ${{ env.MACOS_DMG_NAME }}.dmg
           path: ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg
 
-  build-for-macOS-aarch64:
+  aarch64:
     runs-on: macos-12-large
 
     if: ${{ github.event.inputs.arch == 'All' || github.event.inputs.arch == 'aarch64' }}
@@ -233,7 +233,7 @@ jobs:
           path: ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg
 
 
-  build-for-macOS-universal:
+  universal:
     runs-on: macos-11
 
     if: ${{ github.event.inputs.arch == 'All' || github.event.inputs.arch == 'universal' }}
