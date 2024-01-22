@@ -161,6 +161,7 @@ jobs:
       - name: Install flutter
         uses: subosito/flutter-action@v2
         with:
+          cache: true
           channel: "beta"
           flutter-version: ${{ env.FLUTTER_VERSION }}
 
@@ -263,6 +264,7 @@ jobs:
       - name: Install flutter
         uses: subosito/flutter-action@v2
         with:
+          cache: true
           channel: "beta"
           flutter-version: ${{ env.FLUTTER_VERSION }}
 
