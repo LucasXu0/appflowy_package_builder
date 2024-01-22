@@ -62,6 +62,7 @@ jobs:
       - name: Install flutter
         uses: subosito/flutter-action@v2
         with:
+          cache: true
           channel: "beta"
           flutter-version: ${{ env.FLUTTER_VERSION }}
 
@@ -74,10 +75,13 @@ jobs:
           components: rustfmt
           profile: minimal
 
+      - uses: davidB/rust-cargo-make@v1
+        with:
+          version: '0.37.5'
+
       - name: Install prerequisites
         working-directory: frontend
         run: |
-          cargo install --force cargo-make
           cargo install --force duckscript_cli
 
       - name: Generate env file
@@ -138,13 +142,13 @@ jobs:
           path: ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg
 
   aarch64:
-    runs-on: macos-12-large
+    runs-on: macos-13-xlarge
 
     if: ${{ github.event.inputs.arch == 'All' || github.event.inputs.arch == 'aarch64' }}
 
     env:
       MACOS_APP_RELEASE_PATH: frontend/appflowy_flutter/product/${{ github.event.inputs.build_name }}/macos/Release
-      MACOS_X86_ZIP_NAME: AppFlowy-${{ github.event.inputs.build_name }}-macos-aarch64.zip
+      MACOS_AARCH64_ZIP_NAME: AppFlowy-${{ github.event.inputs.build_name }}-macos-aarch64.zip
       MACOS_DMG_NAME: AppFlowy-${{ github.event.inputs.build_name }}-macos-aarch64
 
     steps:
@@ -169,10 +173,13 @@ jobs:
           components: rustfmt
           profile: minimal
 
+      - uses: davidB/rust-cargo-make@v1
+        with:
+          version: '0.37.5'
+
       - name: Install prerequisites
         working-directory: frontend
         run: |
-          cargo install --force cargo-make
           cargo install --force duckscript_cli
 
       - name: Generate env file
@@ -199,6 +206,7 @@ jobs:
           /usr/bin/codesign --force --options runtime --deep --sign "${{ secrets.MACOS_CODESIGN_ID }}" "${{ env.MACOS_APP_RELEASE_PATH }}/AppFlowy.app" -v
 
       - name: Create macOS dmg
+        continue-on-error: true
         run: |
           brew install create-dmg
           create-dmg \
@@ -213,21 +221,23 @@ jobs:
           "${{ env.MACOS_APP_RELEASE_PATH }}/AppFlowy.app"
 
       - name: Notarize AppFlowy
+        continue-on-error: true
         run: |
           xcrun notarytool submit ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg --apple-id ${{ secrets.MACOS_NOTARY_USER }} --team-id ${{ secrets.MACOS_TEAM_ID }} --password ${{ secrets.MACOS_NOTARY_PWD }} -v -f "json" --wait
 
       - name: Archive Asset
         working-directory: ${{ env.MACOS_APP_RELEASE_PATH }}
-        run: zip --symlinks -qr ${{ env.MACOS_X86_ZIP_NAME }} AppFlowy.app
+        run: zip --symlinks -qr ${{ env.MACOS_AARCH64_ZIP_NAME }} AppFlowy.app
 
       - name: Upload ZIP
         uses: actions/upload-artifact@v2
         with:
-          name: ${{ env.MACOS_X86_ZIP_NAME }}
-          path: ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_X86_ZIP_NAME }}
+          name: ${{ env.MACOS_AARCH64_ZIP_NAME }}
+          path: ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_AARCH64_ZIP_NAME }}
 
       - name: Upload DMG
         uses: actions/upload-artifact@v2
+        continue-on-error: true
         with:
           name: ${{ env.MACOS_DMG_NAME }}.dmg
           path: ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg
@@ -263,10 +273,13 @@ jobs:
           targets: "aarch64-apple-darwin,x86_64-apple-darwin"
           components: rustfmt
 
+      - uses: davidB/rust-cargo-make@v1
+        with:
+          version: '0.37.5'
+
       - name: Install prerequisites
         working-directory: frontend
         run: |
-          cargo install --force cargo-make
           cargo install --force duckscript_cli
 
       - name: Generate env file
