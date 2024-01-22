@@ -19,6 +19,7 @@ on:
         type: choice
         description: 'Server Type (1 for local, 2 for cloud)'
         required: true
+        default: '2'
         options:
             - 1
             - 2

@@ -19,6 +19,7 @@ on:
         type: choice
         description: 'Server Type (1 for local, 2 for cloud)'
         required: true
+        default: '2'
         options:
             - 1
             - 2
@@ -32,7 +33,7 @@ env:
   RUST_TOOLCHAIN: "1.75"
 
 jobs:
-  build-for-windows:
+  build:
     env:
       WINDOWS_APP_RELEASE_PATH: frontend\appflowy_flutter\product\${{ github.event.inputs.build_name }}\windows
       WINDOWS_ZIP_NAME: AppFlowy-${{ github.event.inputs.build_name }}-windows-x86_64.zip
@@ -50,6 +51,7 @@ jobs:
       - name: Install flutter
         uses: subosito/flutter-action@v2
         with:
+          cache: true
           channel: "beta"
           flutter-version: ${{ env.FLUTTER_VERSION }}
 
