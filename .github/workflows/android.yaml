@@ -101,7 +101,7 @@ jobs:
 
       - uses: davidB/rust-cargo-make@v1
         with:
-          version: "0.36.6"
+          version: '0.37.5'
 
       - name: Install prerequisites
         working-directory: frontend
