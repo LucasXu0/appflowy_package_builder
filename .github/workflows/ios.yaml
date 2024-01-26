@@ -107,14 +107,13 @@ jobs:
 
       - uses: davidB/rust-cargo-make@v1
         with:
-          version: "0.36.6"
+          version: '0.37.5'
 
       - name: Install prerequisites
         working-directory: frontend
         run: |
           rustup target install aarch64-apple-ios
           cargo install --force duckscript_cli
-          cargo install --force cargo-make
           cargo install --force cargo-lipo
           cargo make appflowy-flutter-deps-tools
         shell: bash

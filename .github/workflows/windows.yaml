@@ -64,11 +64,14 @@ jobs:
           components: rustfmt
           profile: minimal
 
+      - uses: davidB/rust-cargo-make@v1
+        with:
+          version: '0.37.5'
+
       - name: Install prerequisites
         working-directory: frontend
         run: |
           vcpkg integrate install
-          cargo install --force cargo-make
           cargo install --force duckscript_cli
 
       - name: Generate env file

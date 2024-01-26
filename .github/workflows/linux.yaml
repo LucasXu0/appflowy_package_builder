@@ -90,7 +90,7 @@ jobs:
 
       - uses: davidB/rust-cargo-make@v1
         with:
-          version: "0.36.6"
+          version: '0.37.5'
 
       - name: Install prerequisites
         working-directory: frontend
@@ -101,7 +101,6 @@ jobs:
           sudo apt-get install keybinder-3.0 libnotify-dev libwayland-cursor0 libwayland-client0 libwayland-egl1
           sudo apt-get -y install alien
           source $HOME/.cargo/env
-          cargo install --force cargo-make
           cargo install --force duckscript_cli
           rustup target add ${{ matrix.target }}
         shell: bash

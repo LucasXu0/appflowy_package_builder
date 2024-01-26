@@ -101,7 +101,7 @@ jobs:
 
       - uses: davidB/rust-cargo-make@v1
         with:
-          version: "0.36.6"
+          version: '0.37.5'
 
       - name: Install prerequisites
         working-directory: frontend
@@ -150,9 +150,10 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
             cargo make --profile production-android appflowy-core-dev-android
-            sh scripts/code_generation/generate.sh
             cd appflowy_flutter
             flutter pub get
+            flutter packages pub get
+            sh scripts/code_generation/generate.sh
             if [ ${{github.event.inputs.build_type}} = "apk" ]; then
               flutter build apk --build-name ${{ github.event.inputs.build_name }} --build-number ${{ github.event.inputs.build_number }} --split-per-abi --split-debug-info=./ --obfuscate
             elif [ ${{github.event.inputs.build_type}} = "appbundle" ]; then
