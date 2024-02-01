@@ -153,7 +153,9 @@ jobs:
             cd appflowy_flutter
             flutter pub get
             flutter packages pub get
+            cd ..
             sh scripts/code_generation/generate.sh
+            cd appflowy_flutter
             if [ ${{github.event.inputs.build_type}} = "apk" ]; then
               flutter build apk --build-name ${{ github.event.inputs.build_name }} --build-number ${{ github.event.inputs.build_number }} --split-per-abi --split-debug-info=./ --obfuscate
             elif [ ${{github.event.inputs.build_type}} = "appbundle" ]; then
