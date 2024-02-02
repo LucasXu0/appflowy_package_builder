@@ -12,9 +12,8 @@ on:
         required: true
         default: "main"
       build_name:
-        description: "Build Version (it should match the version in pubspec.yaml)"
-        required: true
-        default: "0.4.4"
+        description: "Build Version (if not provided, it will be fetched from pubspec.yaml)"
+        required: false
       server_type:
         type: choice
         description: 'Server Type (1 for local, 2 for cloud)'
@@ -34,10 +33,6 @@ env:
 
 jobs:
   build:
-    env:
-      WINDOWS_APP_RELEASE_PATH: frontend\appflowy_flutter\product\${{ github.event.inputs.build_name }}\windows
-      WINDOWS_ZIP_NAME: AppFlowy-${{ github.event.inputs.build_name }}-windows-x86_64.zip
-      WINDOWS_INSTALLER_NAME: AppFlowy-${{ github.event.inputs.build_name }}-windows-x86_64
 
     runs-on: windows-2019
 
@@ -47,6 +42,25 @@ jobs:
         with:
           repository: ${{ github.event.inputs.repo }}
           ref: ${{ github.event.inputs.branch }}
+
+      # get build name from pubspec.yaml
+      - name: Get build name if not provided
+        id: get_build_name
+        run: |
+          if [ -z "${{ github.event.inputs.build_name }}" ]; then
+            echo "build_name is not provided, fetching from pubspec.yaml..."
+            echo "build_name=$(grep 'version: ' frontend/appflowy_flutter/pubspec.yaml | awk '{print $2}')" >> $GITHUB_ENV
+          else
+            echo "build_name=${{ github.event.inputs.build_name }}" >> $GITHUB_ENV
+          fi
+        shell: bash
+
+      - name: Set Env
+        run: |
+          echo"WINDOWS_APP_RELEASE_PATH=frontend\appflowy_flutter\product\$build_name\windows" >> $GITHUB_ENV
+          echo"WINDOWS_ZIP_NAME=AppFlowy-$build_name-windows-x86_64.zip" >> $GITHUB_ENV
+          echo"WINDOWS_INSTALLER_NAME=AppFlowy-$build_name-windows-x86_64" >> $GITHUB_ENV
+        shell: bash
 
       - name: Install flutter
         uses: subosito/flutter-action@v2

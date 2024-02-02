@@ -12,9 +12,8 @@ on:
           required: true
           default: "AppFlowy-IO/AppFlowy"
         build_name:
-            description: "Build Version (it should match the version in pubspec.yaml)"
-            required: true
-            default: "0.4.4"
+            description: "Build Version (if not provided, it will be fetched from pubspec.yaml)"
+            required: false
         build_number:
             description: 'Build Number (it should be unique)'
             required: true
@@ -69,6 +68,18 @@ jobs:
         with:
           repository: ${{ github.event.inputs.repo }}
           ref: ${{ github.event.inputs.branch }}
+
+      # get build name from pubspec.yaml
+      - name: Get build name if not provided
+        id: get_build_name
+        run: |
+          if [ -z "${{ github.event.inputs.build_name }}" ]; then
+            echo "build_name is not provided, fetching from pubspec.yaml..."
+            echo "build_name=$(grep 'version: ' frontend/appflowy_flutter/pubspec.yaml | awk '{print $2}')" >> $GITHUB_ENV
+          else
+            echo "build_name=${{ github.event.inputs.build_name }}" >> $GITHUB_ENV
+          fi
+        shell: bash
 
       - name: Install Rust toolchain
         id: rust_toolchain
@@ -153,9 +164,9 @@ jobs:
             cargo make --profile production-android code_generation
             cd appflowy_flutter
             if [ ${{github.event.inputs.build_type}} = "apk" ]; then
-              flutter build apk --build-name ${{ github.event.inputs.build_name }} --build-number ${{ github.event.inputs.build_number }} --split-per-abi --split-debug-info=./ --obfuscate
+              flutter build apk --build-name $build_name --build-number ${{ github.event.inputs.build_number }} --split-per-abi --split-debug-info=./ --obfuscate
             elif [ ${{github.event.inputs.build_type}} = "appbundle" ]; then
-              flutter build appbundle --build-name ${{ github.event.inputs.build_name }} --build-number ${{ github.event.inputs.build_number }} --split-debug-info=./ --obfuscate
+              flutter build appbundle --build-name $build_name --build-number ${{ github.event.inputs.build_number }} --split-debug-info=./ --obfuscate
             fi
 
       - name: Rename APK
@@ -168,7 +179,7 @@ jobs:
         if: github.event.inputs.build_type == 'apk'
         uses: actions/upload-artifact@v2
         with:
-          name: AppFlowy-${{ github.event.inputs.build_name }}.apk
+          name: AppFlowy-$build_name.apk
           path: frontend/appflowy_flutter/build/app/outputs/flutter-apk/AppFlowy.apk
 
       - name: Rename AAB
@@ -181,5 +192,5 @@ jobs:
         if: github.event.inputs.build_type  == 'appbundle'
         uses: actions/upload-artifact@v2
         with:
-          name: AppFlowy-${{ github.event.inputs.build_name }}.aab
+          name: AppFlowy-$build_name.aab
           path: frontend/appflowy_flutter/build/app/outputs/bundle/release/AppFlowy.aab

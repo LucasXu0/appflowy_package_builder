@@ -12,9 +12,8 @@ on:
         required: true
         default: "main"
       build_name:
-        description: "Build Version (it should match the version in pubspec.yaml)"
-        required: true
-        default: "0.4.4"
+        description: "Build Version (if not provided, it will be fetched from pubspec.yaml)"
+        required: false
       build_number:
         description: "Build Number (it should be unique)"
         required: true
@@ -52,6 +51,18 @@ jobs:
         with:
           repository: ${{ github.event.inputs.repo }}
           ref: ${{ github.event.inputs.branch }}
+
+      # get build name from pubspec.yaml
+      - name: Get build name if not provided
+        id: get_build_name
+        run: |
+          if [ -z "${{ github.event.inputs.build_name }}" ]; then
+            echo "build_name is not provided, fetching from pubspec.yaml..."
+            echo "build_name=$(grep 'version: ' frontend/appflowy_flutter/pubspec.yaml | awk '{print $2}')" >> $GITHUB_ENV
+          else
+            echo "build_name=${{ github.event.inputs.build_name }}" >> $GITHUB_ENV
+          fi
+        shell: bash
 
       - name: Install the Apple certificate and provisioning profile
         env:
@@ -131,7 +142,7 @@ jobs:
           cargo make --profile production-ios-arm64 appflowy-core-dev-ios
           cargo make --profile production-ios-arm64 code_generation
           cd appflowy_flutter
-          flutter build ipa --build-name ${{ github.event.inputs.build_name }} --build-number ${{ github.event.inputs.build_number }} --split-debug-info=./ --obfuscate
+          flutter build ipa --build-name $build_name --build-number ${{ github.event.inputs.build_number }} --split-debug-info=./ --obfuscate
 
       - name: Upload ipa
         uses: actions/upload-artifact@v2
