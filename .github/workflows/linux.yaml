@@ -13,8 +13,7 @@ on:
         default: "main"
       build_name:
         description: "Build Version (it should match the version in pubspec.yaml)"
-        required: true
-        default: "0.4.4"
+        required: false
       server_type:
         type: choice
         description: 'Server Type (1 for local, 2 for cloud)'
@@ -42,13 +41,6 @@ jobs:
           - os: ubuntu-20.04
             target: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
-    env:
-      LINUX_APP_RELEASE_PATH: frontend/appflowy_flutter/product/${{ github.event.inputs.build_name }}/linux/Release
-      LINUX_ZIP_NAME: AppFlowy-${{ github.event.inputs.build_name }}-linux.tar.gz
-      LINUX_PACKAGE_DEB_NAME: AppFlowy-${{ github.event.inputs.build_name }}-linux-x86_64.deb
-      LINUX_PACKAGE_RPM_NAME: AppFlowy-${{ github.event.inputs.build_name }}-linux-x86_64.rpm
-      LINUX_PACKAGE_TMP_RPM_NAME: AppFlowy-${{ github.event.inputs.build_name }}-2.x86_64.rpm
-      LINUX_PACKAGE_APPIMAGE_NAME: AppFlowy-${{ github.event.inputs.build_name }}-linux-x86_64.AppImage
 
     steps:
       # the following step is required to avoid running out of space
@@ -64,6 +56,27 @@ jobs:
         with:
           repository: ${{ github.event.inputs.repo }}
           ref: ${{ github.event.inputs.branch }}
+
+      # get build name from pubspec.yaml
+      - name: Get build name if not provided
+        id: get_build_name
+        run: |
+          if [ -z "${{ github.event.inputs.build_name }}" ]; then
+            echo "::set-output name=build_name::$(grep 'version: ' frontend/appflowy_flutter/pubspec.yaml | awk '{print $2}')"
+          else
+            echo "::set-output name=build_name::${{ github.event.inputs.build_name }}"
+          fi
+        shell: bash
+
+      - name: Set Env
+        run: |
+          echo "LINUX_APP_RELEASE_PATH=frontend/appflowy_flutter/product/${{ steps.get_build_name.outputs.build_name }}/linux/Release" >> $GITHUB_ENV
+          echo "LINUX_ZIP_NAME=AppFlowy-${{ steps.get_build_name.outputs.build_name }}-linux.tar.gz" >> $GITHUB_ENV
+          echo "LINUX_PACKAGE_DEB_NAME=AppFlowy-${{ steps.get_build_name.outputs.build_name }}-linux-x86_64.deb" >> $GITHUB_ENV
+          echo "LINUX_PACKAGE_RPM_NAME=AppFlowy-${{ steps.get_build_name.outputs.build_name }}-linux-x86_64.rpm" >> $GITHUB_ENV
+          echo "LINUX_PACKAGE_TMP_RPM_NAME=AppFlowy-${{ steps.get_build_name.outputs.build_name }}-2.x86_64.rpm" >> $GITHUB_ENV
+          echo "LINUX_PACKAGE_APPIMAGE_NAME=AppFlowy-${{ steps.get_build_name.outputs.build_name }}-linux-x86_64.AppImage" >> $GITHUB_ENV
+        shell: bash
 
       - name: Install Rust toolchain
         id: rust_toolchain
@@ -116,34 +129,34 @@ jobs:
         working-directory: frontend
         run: |
           flutter config --enable-linux-desktop
-          dart ./scripts/flutter_release_build/build_flowy.dart run . ${{ github.event.inputs.build_name }}
+          dart ./scripts/flutter_release_build/build_flowy.dart run . ${{ steps.get_build_name.outputs.build_name }}
 
       - name: Archive Asset
-        working-directory: ${{ env.LINUX_APP_RELEASE_PATH }}
-        run: tar -czf ${{ env.LINUX_ZIP_NAME }} *
+        working-directory: LINUX_APP_RELEASE_PATH
+        run: tar -czf $LINUX_ZIP_NAME *
 
       - name: Build Linux package (.AppImage)
         working-directory: frontend
         continue-on-error: true
         run: |
-          sh scripts/linux_distribution/appimage/build_appimage.sh ${{ github.event.inputs.build_name }}
+          sh scripts/linux_distribution/appimage/build_appimage.sh ${{ steps.get_build_name.outputs.build_name }}
 
       - name: Build Linux package (.deb)
         working-directory: frontend
         run: |
-          sh scripts/linux_distribution/deb/build_deb.sh appflowy_flutter/product/${{ github.event.inputs.build_name }}/linux/Release ${{ github.event.inputs.build_name }} ${{ env.LINUX_PACKAGE_DEB_NAME }}
+          sh scripts/linux_distribution/deb/build_deb.sh appflowy_flutter/product/${{ steps.get_build_name.outputs.build_name }}/linux/Release ${{ steps.get_build_name.outputs.build_name }} $LINUX_PACKAGE_DEB_NAME
 
       - name: Build Linux package (.rpm)
-        working-directory: ${{ env.LINUX_APP_RELEASE_PATH }}
+        working-directory: $LINUX_APP_RELEASE_PATH
         run: |
-          sudo alien -r ${{ env.LINUX_PACKAGE_DEB_NAME }}
-          cp -r ${{ env.LINUX_PACKAGE_TMP_RPM_NAME }} ${{ env.LINUX_PACKAGE_RPM_NAME }}
+          sudo alien -r $LINUX_PACKAGE_DEB_NAME
+          cp -r $LINUX_PACKAGE_TMP_RPM_NAME $LINUX_PACKAGE_RPM_NAME
 
       - name: Upload ZIP
         uses: actions/upload-artifact@v2
         with:
-          name: ${{ env.LINUX_ZIP_NAME }}
-          path: ${{ env.LINUX_APP_RELEASE_PATH }}/${{ env.LINUX_ZIP_NAME }}
+          name: $LINUX_ZIP_NAME
+          path: $LINUX_APP_RELEASE_PATH/$LINUX_ZIP_NAME
 
       - name: Upload Linux package
         working-directory: frontend
@@ -153,18 +166,18 @@ jobs:
       - name: Upload AppImage
         uses: actions/upload-artifact@v2
         with:
-          name: ${{ env.LINUX_PACKAGE_APPIMAGE_NAME}}
+          name: $LINUX_PACKAGE_APPIMAGE_NAME}}
           path:
             frontend/AppFlowy-${{ github.event.inputs.build_name }}-x86_64.AppImage
 
       - name: Upload RPM
         uses: actions/upload-artifact@v2
         with:
-          name: ${{ env.LINUX_PACKAGE_RPM_NAME }}
-          path: ${{ env.LINUX_APP_RELEASE_PATH }}/${{ env.LINUX_PACKAGE_RPM_NAME }}
+          name: $LINUX_PACKAGE_RPM_NAME
+          path: $LINUX_APP_RELEASE_PATH/$LINUX_PACKAGE_RPM_NAME
 
       - name: Upload DEB
         uses: actions/upload-artifact@v2
         with:
-          name: ${{ env.LINUX_PACKAGE_DEB_NAME }}
-          path: ${{ env.LINUX_APP_RELEASE_PATH }}/${{ env.LINUX_PACKAGE_DEB_NAME }}
+          name: $LINUX_PACKAGE_DEB_NAME
+          path: $LINUX_APP_RELEASE_PATH/$LINUX_PACKAGE_DEB_NAME
