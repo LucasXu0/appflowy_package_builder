@@ -53,6 +53,10 @@ jobs:
           repository: ${{ github.event.inputs.repo }}
           ref: ${{ github.event.inputs.branch }}
 
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
       - name: Install the Apple certificate and provisioning profile
         env:
           IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
