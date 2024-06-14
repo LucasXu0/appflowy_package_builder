@@ -43,7 +43,7 @@ env:
 
 jobs:
   x86_64:
-    runs-on: macos-11
+    runs-on: macos-14
 
     if: ${{ github.event.inputs.arch == 'All' || github.event.inputs.arch == 'x86_64' }}
 
@@ -245,7 +245,7 @@ jobs:
 
 
   universal:
-    runs-on: macos-11
+    runs-on: macos-14
 
     if: ${{ github.event.inputs.arch == 'All' || github.event.inputs.arch == 'universal' }}
 
