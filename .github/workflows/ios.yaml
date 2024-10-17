@@ -14,27 +14,24 @@ on:
       build_name:
         description: "Build Version (it should match the version in pubspec.yaml)"
         required: true
-        default: "0.5.9"
+        default: "0.7.2"
       build_number:
         description: "Build Number (it should be unique)"
         required: true
         default: "1"
-      server_type:
+      internal_build:
         type: choice
-        description: 'Server Type (1 for local, 2 for cloud)'
+        description: "Internal Build Type (1 for internal, 0 for external)"
         required: true
-        default: '2'
+        default: "1"
         options:
-            - 1
-            - 2
-      server_url:
-        description: 'Server URL'
-        required: true
-        default: 'https://beta.appflowy.cloud'
+          - 0
+          - 1
+          - 2
 
 env:
   FLUTTER_VERSION: "3.22.0"
-  RUST_TOOLCHAIN: "1.75"
+  RUST_TOOLCHAIN: "1.80.1"
 
 jobs:
   build:
@@ -111,7 +108,7 @@ jobs:
 
       - uses: davidB/rust-cargo-make@v1
         with:
-          version: '0.37.5'
+          version: "0.37.5"
 
       - name: Install prerequisites
         working-directory: frontend
@@ -125,20 +122,38 @@ jobs:
       - name: Generate env file
         working-directory: frontend/appflowy_flutter
         run: |
-          echo "${{ github.env.inputs.server_url }}" > .env
-          echo "${{ github.env.inputs.server_type }}" >> .env
+          echo "INTERNAL_BUILD=${{ github.env.inputs.internal_build }}" >> .env
+          echo "SENTRY_DSN=${{ secrets.SENTRY_DSN }}" >> .env
         shell: bash
 
       - name: Build AppFlowy
         working-directory: frontend
         run: |
-          cargo make --profile production-ios-arm64 appflowy-core-dev-ios
-          cargo make --profile production-ios-arm64 code_generation
+          cargo make --profile production-ios-arm64 appflowy-core-dev-ios &
+          cargo make --profile production-ios-arm64 code_generation &
+          wait
           cd appflowy_flutter
-          flutter build ipa --build-name ${{ github.event.inputs.build_name }} --build-number ${{ github.event.inputs.build_number }} --split-debug-info=./ --obfuscate
+          flutter build ipa --build-name ${{ github.event.inputs.build_name }} --build-number ${{ github.event.inputs.build_number }} --split-debug-info=./debug_info --obfuscate
 
       - name: Upload ipa
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: AppFlowy.xcarchive
           path: frontend/appflowy_flutter/build/ios/archive/Runner.xcarchive
+
+      - name: Upload debug symbols
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-symbols
+          path: frontend/appflowy_flutter/debug_info
+
+      - name: Setup Sentry CLI
+        uses: mathieu-bour/setup-sentry-cli@v1
+        with:
+          version: latest
+          token: ${{ SECRETS.SENTRY_TOKEN }}
+          organization: appflowy
+          project: appflowy
+
+      - name: Upload symbols to Sentry
+        run: sentry-cli debug-files upload -o appflowy -p appflowy frontend/appflowy_flutter/build

@@ -14,32 +14,28 @@ on:
       build_name:
         description: "Build Version (it should match the version in pubspec.yaml)"
         required: true
-        default: "0.5.9"
-      server_type:
+        default: "0.7.2"
+      internal_build:
         type: choice
-        description: 'Server Type (1 for local, 2 for cloud)'
+        description: "Internal Build Type (1 for internal, 0 for external)"
         required: true
-        default: '2'
+        default: "1"
         options:
-            - 1
-            - 2
-      server_url:
-        description: 'Server URL'
-        required: true
-        default: 'https://beta.appflowy.cloud'
+          - 0
+          - 1
 
 env:
   FLUTTER_VERSION: "3.22.0"
-  RUST_TOOLCHAIN: "1.75"
+  RUST_TOOLCHAIN: "1.80.1"
 
 jobs:
   build:
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-20.04]
+        os: [ubuntu-22.04]
         include:
-          - os: ubuntu-20.04
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
     env:
@@ -90,7 +86,7 @@ jobs:
 
       - uses: davidB/rust-cargo-make@v1
         with:
-          version: '0.37.5'
+          version: "0.37.5"
 
       - name: Install prerequisites
         working-directory: frontend
@@ -100,6 +96,7 @@ jobs:
           sudo apt-get install -y build-essential libsqlite3-dev libssl-dev clang cmake ninja-build pkg-config libgtk-3-dev
           sudo apt-get install keybinder-3.0 libnotify-dev libwayland-cursor0 libwayland-client0 libwayland-egl1
           sudo apt-get -y install alien
+          sudo apt install libmpv-dev mpv
           source $HOME/.cargo/env
           cargo install --force duckscript_cli
           rustup target add ${{ matrix.target }}
@@ -108,8 +105,7 @@ jobs:
       - name: Generate env file
         working-directory: frontend/appflowy_flutter
         run: |
-          echo "${{ github.env.inputs.server_url }}" > .env
-          echo "${{ github.env.inputs.server_type }}" >> .env
+          echo "INTERNAL_BUILD=${{ github.env.inputs.internal_build }}" >> .env
         shell: bash
 
       - name: Build AppFlowy
@@ -140,7 +136,7 @@ jobs:
           cp -r ${{ env.LINUX_PACKAGE_TMP_RPM_NAME }} ${{ env.LINUX_PACKAGE_RPM_NAME }}
 
       - name: Upload ZIP
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ env.LINUX_ZIP_NAME }}
           path: ${{ env.LINUX_APP_RELEASE_PATH }}/${{ env.LINUX_ZIP_NAME }}
@@ -151,20 +147,34 @@ jobs:
           ls -a
 
       - name: Upload AppImage
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ env.LINUX_PACKAGE_APPIMAGE_NAME}}
-          path:
-            frontend/AppFlowy-${{ github.event.inputs.build_name }}-x86_64.AppImage
+          path: frontend/AppFlowy-${{ github.event.inputs.build_name }}-x86_64.AppImage
 
       - name: Upload RPM
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ env.LINUX_PACKAGE_RPM_NAME }}
           path: ${{ env.LINUX_APP_RELEASE_PATH }}/${{ env.LINUX_PACKAGE_RPM_NAME }}
 
       - name: Upload DEB
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ env.LINUX_PACKAGE_DEB_NAME }}
           path: ${{ env.LINUX_APP_RELEASE_PATH }}/${{ env.LINUX_PACKAGE_DEB_NAME }}
+
+  notify-failure:
+    runs-on: ubuntu-latest
+    needs: build
+    if: failure()
+    steps:
+      - uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: |
+            🔴🔴🔴 Workflow ${{ github.workflow }} in repository ${{ github.repository }} was failed 🔴🔴🔴.
+          fields: repo,message,author,eventName,ref,workflow
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        if: always()

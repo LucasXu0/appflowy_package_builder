@@ -14,23 +14,19 @@ on:
       build_name:
         description: "Build Version (it should match the version in pubspec.yaml)"
         required: true
-        default: "0.5.9"
-      server_type:
+        default: "0.7.2"
+      internal_build:
         type: choice
-        description: 'Server Type (1 for local, 2 for cloud)'
+        description: "Internal Build Type (1 for internal, 0 for external)"
         required: true
-        default: '2'
+        default: "1"
         options:
-            - 1
-            - 2
-      server_url:
-        description: 'Server URL'
-        required: true
-        default: 'https://beta.appflowy.cloud'
+          - 0
+          - 1
 
 env:
   FLUTTER_VERSION: "3.22.0"
-  RUST_TOOLCHAIN: "1.75"
+  RUST_TOOLCHAIN: "1.80.1"
 
 jobs:
   build:
@@ -66,7 +62,7 @@ jobs:
 
       - uses: davidB/rust-cargo-make@v1
         with:
-          version: '0.37.5'
+          version: "0.37.5"
 
       - name: Install prerequisites
         working-directory: frontend
@@ -77,8 +73,7 @@ jobs:
       - name: Generate env file
         working-directory: frontend/appflowy_flutter
         run: |
-          echo "${{ github.env.inputs.server_url }}" > .env
-          echo "${{ github.env.inputs.server_type }}" >> .env
+          echo "INTERNAL_BUILD=${{ github.env.inputs.internal_build }}" >> .env
         shell: bash
 
       - name: Build Windows app
@@ -107,13 +102,28 @@ jobs:
           iscc /F${{ env.WINDOWS_INSTALLER_NAME }} inno_setup_config.iss /DAppVersion=${{ github.event.inputs.build_name }}
 
       - name: Upload EXE
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ env.WINDOWS_INSTALLER_NAME }}.exe
           path: ${{ env.WINDOWS_APP_RELEASE_PATH }}\Output\${{ env.WINDOWS_INSTALLER_NAME }}.exe
 
       - name: Upload ZIP
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ env.WINDOWS_ZIP_NAME }}
           path: ${{ env.WINDOWS_APP_RELEASE_PATH }}/${{ env.WINDOWS_ZIP_NAME }}
+
+  notify-failure:
+    runs-on: ubuntu-latest
+    needs: build
+    if: failure()
+    steps:
+      - uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: |
+            🔴🔴🔴 Workflow ${{ github.workflow }} in repository ${{ github.repository }} was failed 🔴🔴🔴.
+          fields: repo,message,author,eventName,ref,workflow
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        if: always()

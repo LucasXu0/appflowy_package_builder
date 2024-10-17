@@ -14,36 +14,32 @@ on:
       build_name:
         description: "Build Version (it should match the version in pubspec.yaml)"
         required: true
-        default: "0.5.9"
+        default: "0.7.2"
       arch:
         type: choice
-        description: 'Build Architecture'
+        description: "Build Architecture"
         required: true
         options:
-            - All
-            - x86_64
-            - aarch64
-            - universal
-      server_type:
+          - All
+          - x86_64
+          - aarch64
+          - universal
+      internal_build:
         type: choice
-        description: 'Server Type (1 for local, 2 for cloud)'
+        description: "Internal Build Type (1 for internal, 0 for external)"
         required: true
-        default: '2'
+        default: "1"
         options:
-            - 1
-            - 2
-      server_url:
-        description: 'Server URL'
-        required: true
-        default: 'https://beta.appflowy.cloud'
+          - 0
+          - 1
 
 env:
   FLUTTER_VERSION: "3.22.0"
-  RUST_TOOLCHAIN: "1.75"
+  RUST_TOOLCHAIN: "1.80.1"
 
 jobs:
   x86_64:
-    runs-on: macos-14
+    runs-on: macos-12
 
     if: ${{ github.event.inputs.arch == 'All' || github.event.inputs.arch == 'x86_64' }}
 
@@ -77,7 +73,7 @@ jobs:
 
       - uses: davidB/rust-cargo-make@v1
         with:
-          version: '0.37.5'
+          version: "0.37.5"
 
       - name: Install prerequisites
         working-directory: frontend
@@ -87,8 +83,7 @@ jobs:
       - name: Generate env file
         working-directory: frontend/appflowy_flutter
         run: |
-          echo "${{ github.env.inputs.server_url }}" > .env
-          echo "${{ github.env.inputs.server_type }}" >> .env
+          echo "INTERNAL_BUILD=${{ github.env.inputs.internal_build }}" >> .env
         shell: bash
 
       - name: Build AppFlowy
@@ -130,13 +125,13 @@ jobs:
         run: zip --symlinks -qr ${{ env.MACOS_X86_ZIP_NAME }} AppFlowy.app
 
       - name: Upload ZIP
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ env.MACOS_X86_ZIP_NAME }}
           path: ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_X86_ZIP_NAME }}
 
       - name: Upload DMG
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ env.MACOS_DMG_NAME }}.dmg
           path: ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg
@@ -144,7 +139,7 @@ jobs:
   aarch64:
     runs-on: macos-14
 
-    if: ${{ github.event.inputs.arch == 'aarch64' }}
+    if: ${{ github.event.inputs.arch == 'All' || github.event.inputs.arch == 'aarch64' }}
 
     env:
       MACOS_APP_RELEASE_PATH: frontend/appflowy_flutter/product/${{ github.event.inputs.build_name }}/macos/Release
@@ -176,7 +171,7 @@ jobs:
 
       - uses: davidB/rust-cargo-make@v1
         with:
-          version: '0.37.5'
+          version: "0.37.5"
 
       - name: Install prerequisites
         working-directory: frontend
@@ -186,8 +181,7 @@ jobs:
       - name: Generate env file
         working-directory: frontend/appflowy_flutter
         run: |
-          echo "${{ github.env.inputs.server_url }}" > .env
-          echo "${{ github.env.inputs.server_type }}" >> .env
+          echo "INTERNAL_BUILD=${{ github.env.inputs.internal_build }}" >> .env
         shell: bash
 
       - name: Build AppFlowy
@@ -231,21 +225,20 @@ jobs:
         run: zip --symlinks -qr ${{ env.MACOS_AARCH64_ZIP_NAME }} AppFlowy.app
 
       - name: Upload ZIP
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ env.MACOS_AARCH64_ZIP_NAME }}
           path: ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_AARCH64_ZIP_NAME }}
 
       - name: Upload DMG
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
           name: ${{ env.MACOS_DMG_NAME }}.dmg
           path: ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg
 
-
   universal:
-    runs-on: macos-14
+    runs-on: macos-latest
 
     if: ${{ github.event.inputs.arch == 'All' || github.event.inputs.arch == 'universal' }}
 
@@ -277,7 +270,7 @@ jobs:
 
       - uses: davidB/rust-cargo-make@v1
         with:
-          version: '0.37.5'
+          version: "0.37.5"
 
       - name: Install prerequisites
         working-directory: frontend
@@ -287,8 +280,7 @@ jobs:
       - name: Generate env file
         working-directory: frontend/appflowy_flutter
         run: |
-          echo "${{ github.env.inputs.server_url }}" > .env
-          echo "${{ github.env.inputs.server_type }}" >> .env
+          echo "INTERNAL_BUILD=${{ github.env.inputs.internal_build }}" >> .env
         shell: bash
 
       - name: Build AppFlowy
@@ -345,13 +337,28 @@ jobs:
         run: zip --symlinks -qr ${{ env.MACOS_AARCH64_ZIP_NAME }} AppFlowy.app
 
       - name: Upload ZIP
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ env.MACOS_AARCH64_ZIP_NAME }}
           path: ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_AARCH64_ZIP_NAME }}
 
       - name: Upload DMG
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ env.MACOS_DMG_NAME }}.dmg
           path: ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg
+
+  notify-failure:
+    runs-on: ubuntu-latest
+    needs: universal
+    if: failure()
+    steps:
+      - uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: |
+            🔴🔴🔴 Workflow ${{ github.workflow }} in repository ${{ github.repository }} was failed 🔴🔴🔴.
+          fields: repo,message,author,eventName,ref,workflow
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        if: always()
