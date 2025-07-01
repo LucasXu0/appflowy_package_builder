@@ -4,6 +4,36 @@ on:
   push:
     tags:
       - "*"
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Repository"
+        required: true
+        default: "AppFlowy-IO/AppFlowy"
+      branch:
+        description: "Branch"
+        required: true
+        default: "main"
+      version:
+        description: "Build Version (e.g., 0.7.3)"
+        required: true
+      build_number:
+        description: "Build Number (unique identifier for mobile builds)"
+        required: true
+        default: "1"
+      create_release:
+        type: boolean
+        description: "Create GitHub Release"
+        required: true
+        default: true
+      internal_build:
+        type: choice
+        description: "Build Type"
+        required: true
+        default: "1"
+        options:
+          - "0"
+          - "1"
 
 env:
   FLUTTER_VERSION: "3.22.0"
@@ -13,47 +43,381 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.parse_tag.outputs.version }}
-      branch_name: ${{ steps.parse_tag.outputs.branch_name }}
+      version: ${{ steps.parse_inputs.outputs.version }}
+      branch_name: ${{ steps.parse_inputs.outputs.branch_name }}
+      repo: ${{ steps.parse_inputs.outputs.repo }}
+      build_number: ${{ steps.parse_inputs.outputs.build_number }}
+      internal_build: ${{ steps.parse_inputs.outputs.internal_build }}
+      create_release: ${{ steps.parse_inputs.outputs.create_release }}
       upload_url: ${{ steps.create_release.outputs.upload_url }}
+      artifact_prefix: ${{ steps.parse_inputs.outputs.artifact_prefix }}
     steps:
-      - name: Parse Tag
-        id: parse_tag
+      - name: Parse Inputs
+        id: parse_inputs
         run: |
-          TAG_NAME=${GITHUB_REF#refs/tags/}
-          VERSION=$(echo "$TAG_NAME" | cut -f1 -d"_")
-          BRANCH_NAME=$(echo "$TAG_NAME" | cut -f2- -d"_")
-          if [ -z "$BRANCH_NAME" ]; then
-            echo "Error: BRANCH_NAME is empty. The tag name should be in the format of <version>_<branch_name>"
-            exit 1
+          if [ "${{ github.event_name }}" == "push" ]; then
+            # Tag trigger
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+            VERSION=$(echo "$TAG_NAME" | cut -f1 -d"_")
+            BRANCH_NAME=$(echo "$TAG_NAME" | cut -f2- -d"_")
+            if [ -z "$BRANCH_NAME" ]; then
+              echo "Error: BRANCH_NAME is empty. The tag name should be in the format of <version>_<branch_name>"
+              exit 1
+            fi
+            REPO="AppFlowy-IO/AppFlowy"
+            BUILD_NUMBER="1"
+            INTERNAL_BUILD="1"
+            CREATE_RELEASE="true"
+            ARTIFACT_PREFIX="AppFlowy_${TAG_NAME}"
+          else
+            # Manual trigger
+            VERSION="${{ github.event.inputs.version }}"
+            BRANCH_NAME="${{ github.event.inputs.branch }}"
+            REPO="${{ github.event.inputs.repo }}"
+            BUILD_NUMBER="${{ github.event.inputs.build_number }}"
+            INTERNAL_BUILD="${{ github.event.inputs.internal_build }}"
+            CREATE_RELEASE="${{ github.event.inputs.create_release }}"
+            ARTIFACT_PREFIX="AppFlowy-${VERSION}"
           fi
-          echo $VERSION
-          echo $BRANCH_NAME
-          echo "::set-output name=version::$VERSION"
-          echo "::set-output name=branch_name::$BRANCH_NAME"
+
+          echo "Version: $VERSION"
+          echo "Branch: $BRANCH_NAME"
+          echo "Repo: $REPO"
+          echo "Build Number: $BUILD_NUMBER"
+          echo "Internal Build: $INTERNAL_BUILD"
+          echo "Create Release: $CREATE_RELEASE"
+          echo "Artifact Prefix: $ARTIFACT_PREFIX"
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          echo "repo=$REPO" >> $GITHUB_OUTPUT
+          echo "build_number=$BUILD_NUMBER" >> $GITHUB_OUTPUT
+          echo "internal_build=$INTERNAL_BUILD" >> $GITHUB_OUTPUT
+          echo "create_release=$CREATE_RELEASE" >> $GITHUB_OUTPUT
+          echo "artifact_prefix=$ARTIFACT_PREFIX" >> $GITHUB_OUTPUT
 
       - name: Checkout source code
         uses: actions/checkout@v2
         with:
-          repository: AppFlowy-IO/AppFlowy
-          ref: ${{ steps.parse_tag.outputs.branch_name }}
+          repository: ${{ steps.parse_inputs.outputs.repo }}
+          ref: ${{ steps.parse_inputs.outputs.branch_name }}
 
       - name: Create release notes
         id: create_release_notes
+        if: steps.parse_inputs.outputs.create_release == 'true'
         run: |
-          RELEASE_NOTES=$(cat CHANGELOG.md | sed -e '/./{H;$!d;}' -e "x;/##\ Version\ ${{ steps.parse_tag.outputs.version }}/"'!d;')
-          echo "::set-output name=release_notes::$RELEASE_NOTES"
+          RELEASE_NOTES=$(cat CHANGELOG.md | sed -e '/./{H;$!d;}' -e "x;/##\ Version\ ${{ steps.parse_inputs.outputs.version }}/"'!d;')
+          echo "release_notes=$RELEASE_NOTES" >> $GITHUB_OUTPUT
         shell: bash
 
       - name: Create release
         id: create_release
+        if: steps.parse_inputs.outputs.create_release == 'true'
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.ref }}
-          release_name: ${{ steps.parse_tag.outputs.version }}
+          tag_name: ${{ github.event_name == 'push' && github.ref || format('v{0}', steps.parse_inputs.outputs.version) }}
+          release_name: ${{ steps.parse_inputs.outputs.version }}
           body: ${{ steps.create_release_notes.outputs.release_notes }}
+
+  build-for-ios:
+    name: iOS (${{ matrix.job.target }})
+    runs-on: ${{ matrix.job.os }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { target: aarch64-apple-ios, os: macos-14 }
+    env:
+      IOS_ARCHIVE_NAME: ${{ needs.prepare.outputs.artifact_prefix }}.xcarchive
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ needs.prepare.outputs.repo }}
+          ref: ${{ needs.prepare.outputs.branch_name }}
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install the Apple certificate and provisioning profile
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          IOS_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
+          IOS_KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          echo -n "$IOS_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
+          echo -n "$IOS_PROVISION_PROFILE_BASE64" | base64 --decode -o $PP_PATH
+
+          security create-keychain -p "$IOS_KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$IOS_KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
+
+      - name: Install flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          target: ${{ matrix.job.target }}
+          override: true
+          profile: minimal
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ matrix.job.os }}
+          workspaces: |
+            frontend/rust-lib
+
+      - uses: davidB/rust-cargo-make@v1
+        with:
+          version: "0.37.5"
+
+      - name: Install prerequisites
+        working-directory: frontend
+        run: |
+          rustup target install aarch64-apple-ios
+          cargo install --force duckscript_cli
+          cargo install --force cargo-lipo
+          cargo make appflowy-flutter-deps-tools
+        shell: bash
+
+      - name: Generate env file
+        working-directory: frontend/appflowy_flutter
+        run: |
+          echo "INTERNAL_BUILD=${{ needs.prepare.outputs.internal_build }}" >> .env
+          echo "SENTRY_DSN=${{ secrets.SENTRY_DSN }}" >> .env
+        shell: bash
+
+      - name: Build AppFlowy
+        working-directory: frontend
+        run: |
+          cargo make --profile production-ios-arm64 appflowy-core-dev-ios
+          cargo make --profile production-ios-arm64 code_generation
+
+          cd appflowy_flutter
+          flutter build ipa --build-name ${{ needs.prepare.outputs.version }} --build-number ${{ needs.prepare.outputs.build_number }} --split-debug-info=./debug_info --obfuscate
+
+      - name: Compress debug symbols
+        working-directory: frontend/appflowy_flutter
+        run: |
+          tar -czf ios-debug-symbols.tar.gz debug_info
+
+      - name: Upload iOS Archive
+        if: needs.prepare.outputs.create_release == 'true'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.prepare.outputs.upload_url }}
+          asset_path: frontend/appflowy_flutter/build/ios/archive/Runner.xcarchive
+          asset_name: ${{ env.IOS_ARCHIVE_NAME }}
+          asset_content_type: application/octet-stream
+
+      - name: Upload iOS Debug Symbols
+        if: needs.prepare.outputs.create_release == 'true'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.prepare.outputs.upload_url }}
+          asset_path: frontend/appflowy_flutter/ios-debug-symbols.tar.gz
+          asset_name: ${{ needs.prepare.outputs.artifact_prefix }}-ios-debug-symbols.tar.gz
+          asset_content_type: application/gzip
+
+      - name: Setup Sentry CLI
+        uses: mathieu-bour/setup-sentry-cli@v1
+        with:
+          version: latest
+          token: ${{ secrets.SENTRY_TOKEN }}
+          organization: appflowy
+          project: appflowy
+
+      - name: Upload symbols to Sentry
+        run: sentry-cli debug-files upload -o appflowy -p appflowy frontend/appflowy_flutter/debug_info
+
+  build-for-android:
+    name: Android (${{ matrix.job.target }})
+    runs-on: ${{ matrix.job.os }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { target: aarch64-linux-android, os: ubuntu-latest }
+    env:
+      ANDROID_APK_NAME: ${{ needs.prepare.outputs.artifact_prefix }}-android.apk
+      ANDROID_AAB_NAME: ${{ needs.prepare.outputs.artifact_prefix }}-android.aab
+    steps:
+      - name: Maximize build space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+
+      - name: Checkout source code
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ needs.prepare.outputs.repo }}
+          ref: ${{ needs.prepare.outputs.branch_name }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          target: ${{ matrix.job.target }}
+          override: true
+          profile: minimal
+
+      - name: Install flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: "r26d"
+          add-to-path: true
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ matrix.job.os }}
+          workspaces: |
+            frontend/rust-lib
+
+      - uses: davidB/rust-cargo-make@v1
+        with:
+          version: "0.37.5"
+
+      - name: Install prerequisites
+        working-directory: frontend
+        run: |
+          rustup target install aarch64-linux-android
+          cargo install --force duckscript_cli
+          cargo install --version 3.3.0 cargo-ndk
+          sudo wget -qO /etc/apt/trusted.gpg.d/dart_linux_signing_key.asc https://dl-ssl.google.com/linux/linux_signing_key.pub
+          sudo wget -qO /etc/apt/sources.list.d/dart_stable.list https://storage.googleapis.com/download.dartlang.org/linux/debian/dart_stable.list
+          sudo apt-get update
+          sudo apt-get install -y dart curl build-essential libssl-dev clang cmake ninja-build pkg-config libgtk-3-dev
+          sudo apt-get install keybinder-3.0 libnotify-dev
+          sudo apt-get install gcc-multilib
+          sudo apt-get -y install libmpv-dev mpv
+          cargo make appflowy-flutter-deps-tools
+        shell: bash
+
+      - name: Generate env file
+        working-directory: frontend/appflowy_flutter
+        run: |
+          echo "INTERNAL_BUILD=${{ needs.prepare.outputs.internal_build }}" >> .env
+          echo "SENTRY_DSN=${{ secrets.SENTRY_DSN }}" >> .env
+        shell: bash
+
+      - name: Configure release sign
+        working-directory: frontend/appflowy_flutter/android/app
+        run: |
+          sed -i 's/signingConfig signingConfigs.debug/signingConfig signingConfigs.release/g' build.gradle
+
+      - name: Configure key.properties
+        working-directory: frontend/appflowy_flutter/android
+        run: |
+          echo "${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}" | base64 --decode > app/upload-keystore.jks
+          echo -e "storePassword=${{ secrets.ANDROID_UPLOAD_KEYSTORE_STORE_PASSWORD }}\nkeyPassword=${{ secrets.ANDROID_UPLOAD_KEYSTORE_KEY_PASSWORD }}\nkeyAlias=upload\nstoreFile=upload-keystore.jks" > key.properties
+        shell: bash
+
+      - name: Build AppFlowy
+        working-directory: frontend
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          cargo make --profile production-android appflowy-core-dev-android
+          cargo make --profile production-android code_generation
+
+          cd appflowy_flutter
+          flutter build apk --build-name ${{ needs.prepare.outputs.version }} --build-number ${{ needs.prepare.outputs.build_number }} --split-debug-info=./debug_info --obfuscate
+          flutter build appbundle --build-name ${{ needs.prepare.outputs.version }} --build-number ${{ needs.prepare.outputs.build_number }} --split-debug-info=./debug_info --obfuscate
+
+      - name: Compress debug symbols
+        working-directory: frontend/appflowy_flutter
+        run: |
+          tar -czf android-debug-symbols.tar.gz debug_info
+
+      - name: Rename APK and AAB
+        run: |
+          mv frontend/appflowy_flutter/build/app/outputs/flutter-apk/app-release.apk frontend/appflowy_flutter/build/app/outputs/flutter-apk/${{ env.ANDROID_APK_NAME }}
+          mv frontend/appflowy_flutter/build/app/outputs/bundle/release/app-release.aab frontend/appflowy_flutter/build/app/outputs/bundle/release/${{ env.ANDROID_AAB_NAME }}
+        shell: bash
+
+      - name: Upload APK
+        if: needs.prepare.outputs.create_release == 'true'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.prepare.outputs.upload_url }}
+          asset_path: frontend/appflowy_flutter/build/app/outputs/flutter-apk/${{ env.ANDROID_APK_NAME }}
+          asset_name: ${{ env.ANDROID_APK_NAME }}
+          asset_content_type: application/vnd.android.package-archive
+
+      - name: Upload AAB
+        if: needs.prepare.outputs.create_release == 'true'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.prepare.outputs.upload_url }}
+          asset_path: frontend/appflowy_flutter/build/app/outputs/bundle/release/${{ env.ANDROID_AAB_NAME }}
+          asset_name: ${{ env.ANDROID_AAB_NAME }}
+          asset_content_type: application/octet-stream
+
+      - name: Upload Android Debug Symbols
+        if: needs.prepare.outputs.create_release == 'true'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.prepare.outputs.upload_url }}
+          asset_path: frontend/appflowy_flutter/android-debug-symbols.tar.gz
+          asset_name: ${{ needs.prepare.outputs.artifact_prefix }}-android-debug-symbols.tar.gz
+          asset_content_type: application/gzip
+
+      - name: Setup Sentry CLI
+        uses: mathieu-bour/setup-sentry-cli@v1
+        with:
+          version: latest
+          token: ${{ secrets.SENTRY_TOKEN }}
+          organization: appflowy
+          project: appflowy
+
+      - name: Upload symbols to Sentry
+        run: sentry-cli debug-files upload -o appflowy -p appflowy frontend/appflowy_flutter/debug_info
 
   build-for-windows:
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
@@ -66,13 +430,13 @@ jobs:
           - { target: x86_64-pc-windows-msvc, os: windows-2019 }
     env:
       WINDOWS_APP_RELEASE_PATH: frontend\appflowy_flutter\product\${{ needs.prepare.outputs.version }}\windows
-      WINDOWS_INSTALLER_NAME: AppFlowy_${{ github.ref_name }}_windows-x86_64
+      WINDOWS_INSTALLER_NAME: ${{ needs.prepare.outputs.artifact_prefix }}-windows-x86_64
 
     steps:
       - name: Checkout source code
         uses: actions/checkout@v3
         with:
-          repository: AppFlowy-IO/AppFlowy
+          repository: ${{ needs.prepare.outputs.repo }}
           ref: ${{ needs.prepare.outputs.branch_name }}
 
       - name: Export pub environment variable on Windows
@@ -120,6 +484,7 @@ jobs:
 
       - name: Upload Installer Asset
         id: upload-installer-asset
+        if: needs.prepare.outputs.create_release == 'true'
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -129,24 +494,20 @@ jobs:
           asset_name: ${{ env.WINDOWS_INSTALLER_NAME }}.exe
           asset_content_type: application/octet-stream
 
-  build-for-macOS:
-    name: ${{ matrix.job.target }} (${{ matrix.job.os }})
-    runs-on: ${{ matrix.job.os }}
+  build-for-macos-x86_64:
+    name: macOS x86_64
+    runs-on: macos-12
     needs: prepare
-    strategy:
-      fail-fast: false
-      matrix:
-        job:
-          - { target: x86_64-apple-darwin, os: macos-latest }
     env:
       MACOS_APP_RELEASE_PATH: frontend/appflowy_flutter/product/${{ needs.prepare.outputs.version }}/macos/Release
-      MACOS_DMG_NAME: AppFlowy_${{ github.ref_name }}_macos-universal
+      MACOS_DMG_NAME: ${{ needs.prepare.outputs.artifact_prefix }}-macos-x86_64
+      MACOS_ZIP_NAME: ${{ needs.prepare.outputs.artifact_prefix }}-macos-x86_64.zip
       MACOS_CODESIGN_ID: ${{ secrets.MACOS_CODESIGN_ID }}
     steps:
       - name: Checkout source code
         uses: actions/checkout@v3
         with:
-          repository: AppFlowy-IO/AppFlowy
+          repository: ${{ needs.prepare.outputs.repo }}
           ref: ${{ needs.prepare.outputs.branch_name }}
 
       - name: Install flutter
@@ -154,21 +515,264 @@ jobs:
         with:
           channel: "stable"
           flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
 
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-          target: ${{ matrix.job.target }}
+          target: x86_64-apple-darwin
           override: true
           components: rustfmt
           profile: minimal
 
+      - uses: davidB/rust-cargo-make@v1
+        with:
+          version: "0.37.5"
+
       - name: Install prerequisites
         working-directory: frontend
         run: |
-          cargo install --force cargo-make
           cargo install --force duckscript_cli
+
+      - name: Generate env file
+        working-directory: frontend/appflowy_flutter
+        run: |
+          echo "INTERNAL_BUILD=${{ needs.prepare.outputs.internal_build }}" >> .env
+        shell: bash
+
+      - name: Build AppFlowy
+        working-directory: frontend
+        run: |
+          flutter config --enable-macos-desktop
+          dart ./scripts/flutter_release_build/build_flowy.dart run . ${{ needs.prepare.outputs.version }}
+
+      - name: Codesign AppFlowy
+        if: env.MACOS_CODESIGN_ID != ''
+        run: |
+          echo ${{ secrets.MACOS_CERTIFICATE_BASE64 }} | base64 --decode > certificate.p12
+          security create-keychain -p action build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p action build.keychain
+          security import certificate.p12 -k build.keychain -P ${{ secrets.P12_PASSWORD }} -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k action build.keychain
+          /usr/bin/codesign --force --options runtime --deep --sign "${{ secrets.MACOS_CODESIGN_ID }}" "${{ env.MACOS_APP_RELEASE_PATH }}/AppFlowy.app" -v
+
+      - name: Create macOS dmg
+        run: |
+          brew install create-dmg
+          create-dmg \
+          --volname ${{ env.MACOS_DMG_NAME }} \
+          --hide-extension "AppFlowy.app" \
+          --background frontend/scripts/dmg_assets/AppFlowyInstallerBackground.jpg \
+          --window-size 600 450 \
+          --icon-size 94 \
+          --icon "AppFlowy.app" 141 249 \
+          --app-drop-link 458 249 \
+          "${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg" \
+          "${{ env.MACOS_APP_RELEASE_PATH }}/AppFlowy.app"
+
+      - name: Archive Asset
+        working-directory: ${{ env.MACOS_APP_RELEASE_PATH }}
+        run: zip --symlinks -qr ${{ env.MACOS_ZIP_NAME }} AppFlowy.app
+
+      - name: Check for Secret availability
+        id: secret-check
+        shell: bash
+        run: |
+          if [ "${{ secrets.MACOS_NOTARY_USER }}" == '' ]; then
+            echo "available=false" >> $GITHUB_OUTPUT;
+          elif [ "${{ secrets.MACOS_TEAM_ID }}" == '' ]; then
+            echo "available=false" >> $GITHUB_OUTPUT;
+          elif [ "${{ secrets.MACOS_NOTARY_PWD }}" == '' ]; then
+            echo "available=false" >> $GITHUB_OUTPUT;
+          else
+            echo "available=true" >> $GITHUB_OUTPUT;
+          fi
+
+      - name: Notarize AppFlowy
+        if: steps.secret-check.outputs.available == 'true'
+        run: |
+          xcrun notarytool submit ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg --apple-id ${{ secrets.MACOS_NOTARY_USER }} --team-id ${{ secrets.MACOS_TEAM_ID }} --password ${{ secrets.MACOS_NOTARY_PWD }} -v -f "json" --wait
+
+      - name: Upload DMG Asset
+        if: needs.prepare.outputs.create_release == 'true'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.prepare.outputs.upload_url }}
+          asset_path: ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg
+          asset_name: ${{ env.MACOS_DMG_NAME }}.dmg
+          asset_content_type: application/octet-stream
+
+      - name: Upload ZIP Asset
+        if: needs.prepare.outputs.create_release == 'true'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.prepare.outputs.upload_url }}
+          asset_path: ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_ZIP_NAME }}
+          asset_name: ${{ env.MACOS_ZIP_NAME }}
+          asset_content_type: application/zip
+
+  build-for-macos-aarch64:
+    name: macOS aarch64
+    runs-on: macos-14
+    needs: prepare
+    env:
+      MACOS_APP_RELEASE_PATH: frontend/appflowy_flutter/product/${{ needs.prepare.outputs.version }}/macos/Release
+      MACOS_DMG_NAME: ${{ needs.prepare.outputs.artifact_prefix }}-macos-aarch64
+      MACOS_ZIP_NAME: ${{ needs.prepare.outputs.artifact_prefix }}-macos-aarch64.zip
+      MACOS_CODESIGN_ID: ${{ secrets.MACOS_CODESIGN_ID }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ needs.prepare.outputs.repo }}
+          ref: ${{ needs.prepare.outputs.branch_name }}
+
+      - name: Install flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          target: aarch64-apple-darwin
+          override: true
+          components: rustfmt
+          profile: minimal
+
+      - uses: davidB/rust-cargo-make@v1
+        with:
+          version: "0.37.5"
+
+      - name: Install prerequisites
+        working-directory: frontend
+        run: |
+          cargo install --force duckscript_cli
+
+      - name: Generate env file
+        working-directory: frontend/appflowy_flutter
+        run: |
+          echo "INTERNAL_BUILD=${{ needs.prepare.outputs.internal_build }}" >> .env
+        shell: bash
+
+      - name: Build AppFlowy
+        working-directory: frontend
+        run: |
+          flutter config --enable-macos-desktop
+          dart ./scripts/flutter_release_build/build_flowy.dart run . ${{ needs.prepare.outputs.version }}
+
+      - name: Codesign AppFlowy
+        if: env.MACOS_CODESIGN_ID != ''
+        run: |
+          echo ${{ secrets.MACOS_CERTIFICATE_BASE64 }} | base64 --decode > certificate.p12
+          security create-keychain -p action build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p action build.keychain
+          security import certificate.p12 -k build.keychain -P ${{ secrets.P12_PASSWORD }} -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k action build.keychain
+          /usr/bin/codesign --force --options runtime --deep --sign "${{ secrets.MACOS_CODESIGN_ID }}" "${{ env.MACOS_APP_RELEASE_PATH }}/AppFlowy.app" -v
+
+      - name: Create macOS dmg
+        continue-on-error: true
+        run: |
+          brew install create-dmg
+          create-dmg \
+          --volname ${{ env.MACOS_DMG_NAME }} \
+          --hide-extension "AppFlowy.app" \
+          --background frontend/scripts/dmg_assets/AppFlowyInstallerBackground.jpg \
+          --window-size 600 450 \
+          --icon-size 94 \
+          --icon "AppFlowy.app" 141 249 \
+          --app-drop-link 458 249 \
+          "${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg" \
+          "${{ env.MACOS_APP_RELEASE_PATH }}/AppFlowy.app"
+
+      - name: Archive Asset
+        working-directory: ${{ env.MACOS_APP_RELEASE_PATH }}
+        run: zip --symlinks -qr ${{ env.MACOS_ZIP_NAME }} AppFlowy.app
+
+      - name: Notarize AppFlowy
+        continue-on-error: true
+        if: ${{ secrets.MACOS_NOTARY_USER != '' && secrets.MACOS_TEAM_ID != '' && secrets.MACOS_NOTARY_PWD != '' }}
+        run: |
+          xcrun notarytool submit ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg --apple-id ${{ secrets.MACOS_NOTARY_USER }} --team-id ${{ secrets.MACOS_TEAM_ID }} --password ${{ secrets.MACOS_NOTARY_PWD }} -v -f "json" --wait
+
+      - name: Upload DMG Asset
+        if: needs.prepare.outputs.create_release == 'true'
+        continue-on-error: true
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.prepare.outputs.upload_url }}
+          asset_path: ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg
+          asset_name: ${{ env.MACOS_DMG_NAME }}.dmg
+          asset_content_type: application/octet-stream
+
+      - name: Upload ZIP Asset
+        if: needs.prepare.outputs.create_release == 'true'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.prepare.outputs.upload_url }}
+          asset_path: ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_ZIP_NAME }}
+          asset_name: ${{ env.MACOS_ZIP_NAME }}
+          asset_content_type: application/zip
+
+  build-for-macos-universal:
+    name: macOS Universal
+    runs-on: macos-latest
+    needs: prepare
+    env:
+      MACOS_APP_RELEASE_PATH: frontend/appflowy_flutter/product/${{ needs.prepare.outputs.version }}/macos/Release
+      MACOS_DMG_NAME: ${{ needs.prepare.outputs.artifact_prefix }}-macos-universal
+      MACOS_ZIP_NAME: ${{ needs.prepare.outputs.artifact_prefix }}-macos-universal.zip
+      MACOS_CODESIGN_ID: ${{ secrets.MACOS_CODESIGN_ID }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ needs.prepare.outputs.repo }}
+          ref: ${{ needs.prepare.outputs.branch_name }}
+
+      - name: Install flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+          components: rustfmt
+
+      - uses: davidB/rust-cargo-make@v1
+        with:
+          version: "0.37.5"
+
+      - name: Install prerequisites
+        working-directory: frontend
+        run: |
+          cargo install --force duckscript_cli
+
+      - name: Generate env file
+        working-directory: frontend/appflowy_flutter
+        run: |
+          echo "INTERNAL_BUILD=${{ needs.prepare.outputs.internal_build }}" >> .env
+        shell: bash
 
       - name: Build AppFlowy
         working-directory: frontend
@@ -208,11 +812,31 @@ jobs:
           "${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg" \
           "${{ env.MACOS_APP_RELEASE_PATH }}/AppFlowy.app"
 
+      - name: Archive Asset
+        working-directory: ${{ env.MACOS_APP_RELEASE_PATH }}
+        run: zip --symlinks -qr ${{ env.MACOS_ZIP_NAME }} AppFlowy.app
+
+      - name: Check for Secret availability
+        id: secret-check
+        shell: bash
+        run: |
+          if [ "${{ secrets.MACOS_NOTARY_USER }}" == '' ]; then
+            echo "available=false" >> $GITHUB_OUTPUT;
+          elif [ "${{ secrets.MACOS_TEAM_ID }}" == '' ]; then
+            echo "available=false" >> $GITHUB_OUTPUT;
+          elif [ "${{ secrets.MACOS_NOTARY_PWD }}" == '' ]; then
+            echo "available=false" >> $GITHUB_OUTPUT;
+          else
+            echo "available=true" >> $GITHUB_OUTPUT;
+          fi
+
       - name: Notarize AppFlowy
+        if: steps.secret-check.outputs.available == 'true'
         run: |
           xcrun notarytool submit ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg --apple-id ${{ secrets.MACOS_NOTARY_USER }} --team-id ${{ secrets.MACOS_TEAM_ID }} --password ${{ secrets.MACOS_NOTARY_PWD }} -v -f "json" --wait
 
       - name: Upload DMG Asset
+        if: needs.prepare.outputs.create_release == 'true'
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -221,6 +845,17 @@ jobs:
           asset_path: ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_DMG_NAME }}.dmg
           asset_name: ${{ env.MACOS_DMG_NAME }}.dmg
           asset_content_type: application/octet-stream
+
+      - name: Upload ZIP Asset
+        if: needs.prepare.outputs.create_release == 'true'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.prepare.outputs.upload_url }}
+          asset_path: ${{ env.MACOS_APP_RELEASE_PATH }}/${{ env.MACOS_ZIP_NAME }}
+          asset_name: ${{ env.MACOS_ZIP_NAME }}
+          asset_content_type: application/zip
 
   build-for-linux:
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
@@ -238,14 +873,15 @@ jobs:
             }
     env:
       LINUX_APP_RELEASE_PATH: frontend/appflowy_flutter/product/${{ needs.prepare.outputs.version }}/linux/Release
-      LINUX_PACKAGE_DEB_NAME: AppFlowy-${{ needs.prepare.outputs.version }}-linux-x86_64.deb
-      LINUX_PACKAGE_RPM_NAME: AppFlowy-${{ needs.prepare.outputs.version }}-linux-x86_64.rpm
-      LINUX_PACKAGE_TMP_RPM_NAME: AppFlowy-${{ needs.prepare.outputs.version }}-2.x86_64.rpm
+      LINUX_PACKAGE_DEB_NAME: ${{ needs.prepare.outputs.artifact_prefix }}-linux-x86_64.deb
+      LINUX_PACKAGE_RPM_NAME: ${{ needs.prepare.outputs.artifact_prefix }}-linux-x86_64.rpm
+      LINUX_PACKAGE_TMP_RPM_NAME: ${{ needs.prepare.outputs.artifact_prefix }}-2.x86_64.rpm
+      LINUX_APPIMAGE_NAME: ${{ needs.prepare.outputs.artifact_prefix }}-linux-x86_64.AppImage
     steps:
       - name: Checkout source code
         uses: actions/checkout@v3
         with:
-          repository: AppFlowy-IO/AppFlowy
+          repository: ${{ needs.prepare.outputs.repo }}
           ref: ${{ needs.prepare.outputs.branch_name }}
 
       - name: Install flutter
@@ -300,8 +936,49 @@ jobs:
           sudo alien -r ${{ env.LINUX_PACKAGE_DEB_NAME }}
           cp -r ${{ env.LINUX_PACKAGE_TMP_RPM_NAME }} ${{ env.LINUX_PACKAGE_RPM_NAME }}
 
+      - name: Build AppImage
+        working-directory: frontend
+        run: |
+          # Download AppImageTool
+          wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+
+          # Create AppDir structure
+          mkdir -p AppFlowy.AppDir/usr/bin
+          mkdir -p AppFlowy.AppDir/usr/lib
+          mkdir -p AppFlowy.AppDir/usr/share/applications
+          mkdir -p AppFlowy.AppDir/usr/share/icons/hicolor/256x256/apps
+
+          # Copy AppFlowy binary and libraries
+          cp -r ${{ env.LINUX_APP_RELEASE_PATH }}/* AppFlowy.AppDir/usr/
+
+          # Create desktop entry
+          cat > AppFlowy.AppDir/AppFlowy.desktop << EOF
+          [Desktop Entry]
+          Name=AppFlowy
+          Exec=AppFlowy
+          Icon=AppFlowy
+          Type=Application
+          Categories=Office;
+          EOF
+
+          # Copy desktop file to standard location
+          cp AppFlowy.AppDir/AppFlowy.desktop AppFlowy.AppDir/usr/share/applications/
+
+          # Create AppRun script
+          cat > AppFlowy.AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "$0}")""
+          export LD_LIBRARY_PATH="$HERE/usr/lib:$LD_LIBRARY_PATH"
+          exec "$HERE/usr/bin/AppFlowy" "$@"
+          EOF
+          chmod +x AppFlowy.AppDir/AppRun
+
+          # Build AppImage
+          ./appimagetool-x86_64.AppImage AppFlowy.AppDir ${{ env.LINUX_APPIMAGE_NAME }}
+
       - name: Upload Debian package
-        id: upload-release-asset-install-package-deb
+        if: needs.prepare.outputs.create_release == 'true'
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -309,10 +986,10 @@ jobs:
           upload_url: ${{ needs.prepare.outputs.upload_url }}
           asset_path: ${{ env.LINUX_APP_RELEASE_PATH }}/${{ env.LINUX_PACKAGE_DEB_NAME }}
           asset_name: ${{ env.LINUX_PACKAGE_DEB_NAME }}
-          asset_content_type: application/octet-stream
+          asset_content_type: application/vnd.debian.binary-package
 
-      - name: Upload Debian package
-        id: upload-release-asset-install-package-rpm
+      - name: Upload RPM package
+        if: needs.prepare.outputs.create_release == 'true'
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -320,33 +997,70 @@ jobs:
           upload_url: ${{ needs.prepare.outputs.upload_url }}
           asset_path: ${{ env.LINUX_APP_RELEASE_PATH }}/${{ env.LINUX_PACKAGE_RPM_NAME }}
           asset_name: ${{ env.LINUX_PACKAGE_RPM_NAME }}
+          asset_content_type: application/x-rpm
+
+      - name: Upload AppImage
+        if: needs.prepare.outputs.create_release == 'true'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.prepare.outputs.upload_url }}
+          asset_path: frontend/${{ env.LINUX_APPIMAGE_NAME }}
+          asset_name: ${{ env.LINUX_APPIMAGE_NAME }}
           asset_content_type: application/octet-stream
 
-  notify-failure:
-    runs-on: ubuntu-latest
-    needs: [build-for-linux, build-for-windows, build-for-macOS]
-    if: failure()
-    steps:
-      - uses: 8398a7/action-slack@v3
-        with:
-          status: ${{ job.status }}
-          text: |
-            🔴🔴🔴Workflow ${{ github.workflow }} in repository ${{ github.repository }} was failed 🔴🔴🔴.
-          fields: repo,message,author,eventName,ref,workflow
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.RELEASE_SLACK_WEBHOOK }}
-        if: always()
+  # notify-failure:
+  #   runs-on: ubuntu-latest
+  #   needs: [build-for-ios, build-for-android, build-for-windows, build-for-macos-x86_64, build-for-macos-aarch64, build-for-macos-universal, build-for-linux]
+  #   if: failure()
+  #   steps:
+  #     - uses: 8398a7/action-slack@v3
+  #       with:
+  #         status: ${{ job.status }}
+  #         text: |
+  #           🔴🔴🔴 Workflow ${{ github.workflow }} in repository ${{ github.repository }} has failed 🔴🔴🔴
+
+  #           Failed jobs: ${{ join(needs.*.result, ', ') }}
+  #         fields: repo,message,author,eventName,ref,workflow
+  #       env:
+  #         SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+  #       if: always()
 
   notify-slack:
     runs-on: ubuntu-latest
-    needs: [build-for-linux, build-for-windows, build-for-macOS]
+    needs: [build-for-ios, build-for-android, build-for-windows, build-for-macos-x86_64, build-for-macos-aarch64, build-for-macos-universal, build-for-linux]
+    if: always()
     steps:
+      - name: Determine release URL
+        id: release_url
+        run: |
+          if [ "${{ github.event_name }}" == "push" ]; then
+            echo "url=https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          elif [ "${{ needs.prepare.outputs.create_release }}" == "true" ]; then
+            echo "url=https://github.com/${{ github.repository }}/releases/tag/v${{ needs.prepare.outputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "url=Manual build completed - no release created" >> $GITHUB_OUTPUT
+          fi
+
       - uses: 8398a7/action-slack@v3
         with:
           status: ${{ job.status }}
           text: |
-            Workflow ${{ github.workflow }} in repository ${{ github.repository }} has completed.
-            Check the release package at https://github.com/${{ github.repository }}/releases/tag/${{ github.ref }}
+            Workflow ${{ github.workflow }} in repository ${{ github.repository }} has completed successfully!
+
+            **Mobile Platforms:**
+            • iOS: ${{ needs.build-for-ios.result }}
+            • Android: ${{ needs.build-for-android.result }}
+
+            **Desktop Platforms:**
+            • Windows: ${{ needs.build-for-windows.result }}
+            • macOS x86_64: ${{ needs.build-for-macos-x86_64.result }}
+            • macOS aarch64: ${{ needs.build-for-macos-aarch64.result }}
+            • macOS Universal: ${{ needs.build-for-macos-universal.result }}
+            • Linux: ${{ needs.build-for-linux.result }}
+
+            🔗 Release: ${{ steps.release_url.outputs.url }}
           fields: repo,message,commit,author,eventName,ref,workflow,job,took
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
